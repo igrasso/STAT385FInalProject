@@ -1,0 +1,250 @@
+---
+title: "Bayesian Unemployment Claims Model"
+author: "Simon Zehr, Izzi Grasso, Paul Dougal"
+date: "11/10/2020"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+#Introduction
+
+Google trends is a tool produced by Alphabet/Google that allows users to collectdata on search volume of keywords and categories.  Internet search data covera  potentially  vast  sample  of  respondents,  and,  as  opposed  to  surveys,  are  aby-product of normal activity, making non-responses or inaccurate responses anon-issue[7].  Web search traffic can be used to accurately track several socialphenomena, such as the epidemic of influenza virus among people in the U.S.[2].People querying search engines for keywords related to the virus or to treatmentswas utilized to project the spread[4].Using common search terms has resulted in accurate and useful economicstatistics[3].  This data source has proven particularly useful for ”nowcasting”–or  predicting  the  present–on  the  stock  market,  as  analysts  have  access  to  todata on real-time economic activity[2]. Certain terms that have a relationshipto finance such as stock transaction volume, market volatility, and liquidity, canhelp analysts build powerful models[9].
+
+Web  search  data  can  help  us  forecast  other  economic  activity.   For  exam-ple,  search  trends can help market analysts predict future  demand in certainmarkets.  Artola and Galan built a trends model to predict British tourist in-flows in Spain[1].  Such a model could be used to help Spanish business ownersadjust their inventories to meet expected demand for souvenir products.  Studies have also predicted consumer behavior in the U.S. Kholodilin, Podstawskiand Siliverstovs used search trends and autoregressive modeling to forecast U.S.real private consumption[6].  From a business perspective, knowing future mar-ket  trends  is  useful  because  it  influences  the  amount  of  products  a  companyneeds to produce.  Economic forces like supply and demand can change rapidly.During times of recession, in which some assets decline in perceived value, con-sumer spending declines due to job losses and market skepticism.  The globalhousing crisis had a significant impact on U.S. consumer spending due to job losses and declines in wealth.  During the crisis, Americans lost 8.8 million jobsand 19.2 trillion dollars in household wealth[8].  To compensate for their loss ofincome, many filed for unemployment benefits.  As a result, economists saw theunemployment rate increase over time.Trends in unemployment claims seem to be a reasonable predictor of the un-employment rate.  Macroeconomist Robert Gordon shows that there is a “surprisingly tight historical relationship in past US recessions between the cyclicalpeak in new claims for unemployment insurance (measured as a four-week mov-ing  average)  and  the  subsequent  NBER  trough”[5].   Moreover,  initial  claimstend  to  peak  12–18  months  before  the  unemployment  rate  peaks.   Based  onthis  research,  one  could  better  forecast  the  unemployment  rate  by  improvingthe prediction of unemployment claims.  Choi and Varian attempted to showthat Google Trends variables can improve unemployment forecasting[2].  In thispaper we apply a Bayesian approach to constructing and evaluating the unem-ployment models from Choi and Varian’s research[2].
+
+# Motivation
+
+In 2009, Choi and Varian used web search data to build an autoregressive modelof initial claims of unemployment.  As they showed in their research, recentlyunemployed people will naturally search phrases and keywords like ”file for un-employment”,  ”unemployment  office”,  ”unemployment  benefits”,  ”jobs”,  ”re-sume”, etc.  [2].  They also collected data in three categories:  Local/Jobs, Soci-ety/Social, and Services/Welfare  Unemployment. The goal of this project is to replicate their results using classical analysis, and then develop a bayesian model to improve on it. 
+
+# Methodology 
+
+## Obtain Data & Clean
+
+First we obtained the same dataset. This uncludes date-time data on websearches of claims, jobs, and welfare. We then omitted any data with missing values. This data ranges from January 1st, 2004 to July 1st, 2011. 
+```{r}
+library(readxl)
+library(rstan)
+d <- read_excel("~/Desktop/School/Fall_2020/STAT385/Unrate.trends.xls")
+d <- na.omit(d)
+```
+
+## Replicating the Results Using a Classical Approach
+
+First we used an AR1 model to replicate their results. 
+
+The model we incorporated can be defined as follows: 
+
+\begin{equation}\label{eq:AR}
+y_i = \alpha + \beta_i y_{t-1} + \epsilon_t 
+    \end{equation}
+
+### AR1: Classical Approach
+```{r}
+arima((log(d$claims)), order=c(1,0,0))
+```
+
+As opposed to Choi's results:
+![ Choi's Results](ChoiAR1.png)
+## Incorporating a Bayesian Approach
+
+We then incorporated a bayesian approach to try to improve on our results. First we built an ARK model, allowing us to use k time steps previously to predict. 
+
+As above, we incorporated an ARK model as our likelihood, with an uninformed prior:
+
+\begin{equation}\label{eq:ARK}
+y_i = \alpha + \sum_{i=1}^{k}\beta_i y_{t-k} + \epsilon_t 
+    \end{equation}
+
+### Bayesian ARK stan code
+```{r}
+writeLines(readLines("unrate.stan"))
+rstan_options(auto_write = TRUE)
+model <- stan_model("unrate.stan")
+```
+
+#### Format Data
+```{r}
+stan_dat <- list(
+  N = length(log(d$claims)),
+  K = 1,
+  y = as.vector(log(d$claims))
+)
+```
+
+#### Fit Model
+```{r}
+fit <- sampling(model, stan_dat,
+                cores = 2, iter = 2000,
+                refresh = 0, chains = 2,
+                control = list(max_treedepth = 20))
+```
+
+#### Infereence
+```{r}
+print(fit)
+```
+
+#### Visualization
+```{r}
+plot(fit, show_density = TRUE)
+```
+
+
+As you can see, our results match Choi's much more closely in this model, with a mean $\beta$ = 0.98 and intercept = 0.31. 
+
+We then incorporated a second variable into our model, building a multivariate ARK model using not just claims, but also jobs. However, we used k timesteps of claims data, and only the data on jobs keyword searches of the current week. 
+
+\begin{equation}\label{eq:ARK2}
+y_i = \alpha + \sum_{i=1}^{k}\beta_i y_{t-k} + c_i y_{t} + \epsilon_t 
+    \end{equation}
+
+### Multivariate ARK (with jobs)
+```{r}
+writeLines(readLines("AR1.stan"))
+rstan_options(auto_write = TRUE)
+model2 <- stan_model("AR1.stan")
+```
+
+#### Format Data
+```{r}
+stan_dat2 <- list(
+  N = length(log(d$claims)),
+  K = 2,
+  y = as.vector(log(d$claims)),
+  x = as.vector(log(d$jobs))
+)
+```
+
+#### Fit Model
+```{r}
+fit2 <- sampling(model2, stan_dat2,
+                cores = 2, iter = 2000,
+                refresh = 0, chains = 2)
+```
+
+#### Model Summary
+```{r}
+print(fit2)
+```
+
+
+#### Visualization
+```{r}
+plot(fit2, , show_density = TRUE)
+```
+
+Our mean value for c, the unknown parameter on our jobs data is very close to zero with c = -0.01, inferring that we may not be using the right data or enough data for that particular variable. 
+
+We then incorporated welfare keyword searches as well. We used the same methodology as before, using only the current welfare data for this week in our model. 
+
+\begin{equation}\label{eq:ARK3}
+y_i = \alpha + \sum_{i=1}^{k}\beta_i y_{t-k} + c_i y_{t} + d_i y_{t} + \epsilon_t 
+    \end{equation}
+
+### Multivariate ARK with Two added keywords
+```{r}
+rstan_options(auto_write = TRUE)
+model3 <- stan_model("MultiVarARK.stan")
+```
+
+#### Format Data
+```{r}
+stan_dat3 <- list(
+  N = length(log(d$claims)),
+  K = 1,
+  y = as.vector(log(d$claims)),
+  x1 = as.vector(d$jobs),
+  x2 = as.vector(d$welfare)
+)
+```
+
+#### Fit Model
+```{r}
+fit3 <- sampling(model3, stan_dat3,
+                cores = 2, iter = 1500,
+                refresh = 0, chains = 2,
+                control = list(max_treedepth = 20))
+```
+
+#### Model Summary
+```{r}
+print(fit3)
+```
+Both c and d have a mean of zero, inferring that they may not be useful additions to the model. 
+
+
+#### Visualization
+```{r}
+plot(fit3, , show_density = TRUE)
+```
+
+Because c and d seemed to be having little use to the model, we then decided to incorporate multiple timesteps for all of the variables. 
+
+\begin{equation}\label{eq:ARK4}
+y_i = \alpha + \sum_{i=1}^{k}\beta_i y_{t-k} + \sum_{i=1}^{k}c_i y_{t-k} + \sum_{i=1}^{k}d_i y_{t-k} + \epsilon_t 
+    \end{equation}
+
+### Multivariate ARK model with two variables and multiple timesteps
+```{r}
+
+rstan_options(auto_write = TRUE)
+model4 <- stan_model("MultiVarARK2.stan")
+```
+
+#### Format Data
+```{r}
+stan_dat4 <- list(
+  N = length(log(d$claims)),
+  K = 2,
+  y = as.vector(log(d$claims)),
+  x1 = as.vector(d$jobs),
+  x2 = as.vector(d$welfare)
+)
+```
+
+#### Fit Model
+```{r}
+fit4 <- sampling(model4, stan_dat4,
+                cores = 2, iter = 1500,
+                refresh = 0, chains = 2,
+                control = list(max_treedepth = 20))
+```
+
+#### Model Summary
+```{r}
+print(fit4)
+```
+
+#### Visualization
+```{r}
+plot(fit4, , show_density = TRUE)
+```
+
+
+# Discussion
+
+Using both classical and bayesian approaches we were able to closely replicate the results of Choi et al. A bayesian methodology to autoregressive modeling of economic indicators using web search keywords is promising. However, our results indicated that multiple variables may not be necessary. To test this hypothesis, in future work we plan to use cross validation to determine the utility of incorporating jobs and welfare to predict unemployment. We would also like to make predictions to vallidate our results. 
+
+
+# References
+[1]    Concha Artola and Enrique Galan. “Tracking the Future on the Web: Con-struction of Leading Indicators Using Internet Searches”. In:DocumentosOcasionales1203 (2012).
+
+[2]    Hyunyoung  Choi  and  Hal  Varian.  “Predicting  the  Present  with  GoogleTrends”. In:Economic Record88 (June 2012).doi:https://doi.org/10.1111/j.1475-4932.2012.00809.x.
+
+[3]    M.  Ettredge,  J.  Gerdes,  and  G.  Karuga.  “Using  web-based  search  datato predict macroeconomic statistics”. In:Communications of the ACM48(2005).doi:https://doi.org/10.1145/1096000.1096010.
+
+[4]    J. Ginzberg et al. “Detecting influenza epi-demics using search engine querydata”. In:Nature457 (2009).
+
+[5]    Robert J. Gordon. “Green shoot or dead twig: Can unemployment claimspredict the end of the American recession?” In: (2009).
+
+[6]    Podstawski Kholodilin and Siliverstovs. “Do Google Searches Help in Now-casting Private Consumption? A Real-Time Evidence for the US”. In:KOFWorking Papers256 (2010).
+
+[7]    Nick McLaren and Rachana Shanbhogue. “Using Internet Search Data asEconomic Indicators”. In:Bank  of  England  Quarterly  Bulletin  No,.  2011Q2(June 2011).doi:http://dx.doi.org/10.2139/ssrn.1865276.
+
+[8]    U.S.  Department  of  the  Treasury.  “The  Financial  Crisis  Response”.  In:(2012).
+
+[9]    Xu Zhong and Michael Raghib. “Revisiting the use of web search data forstock market movements”. In:Scientific Reports9 (2019).
+
+
